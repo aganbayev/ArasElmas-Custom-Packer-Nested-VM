@@ -1,104 +1,85 @@
-# Reverse Engineering & Unpacking: Custom Windows PE Protector (KaBan Crackme)
-## Sample Identification & Metadata
-* **Original File Name:** `0LLRi9C10LHQuCDQvNC10L3Rjw.exe`
-* **Unpacked Output:** `unpacked_SCY.exe` / `custom_protector_unpacked.exe`
-* **File Type:** PE32+ executable (Console) x86-64
-* **MD5:** `63809c874f7ca1de998cecf519a5fe95`
-* **SHA-256:** `269F66EB409A8076E60F9CF7402B6D5DBA94A33331D19BD2CD49DA220A769E53`
-* **File Size:** ~1.04 MB (1,094,656 bytes)
-* **Archive Password:** `infected`
-## Executive Summary
-This repository contains a technical reverse engineering write-up for a custom 64-bit Windows PE protector (`custom protector`). The target binary implements dynamic API resolution, memory protection manipulation, and anti-debugging mechanisms (`IsDebuggerPresent`) to obfuscate its execution flow. 
+# Reverse Engineering & Solving: ArasElmas Custom Packer + Nested-VM Crackme (x64)
 
-Through dynamic tracing, OEP discovery, IAT reconstruction, and binary patching, the underlying executable was fully restored (`unpacked_SCY.exe`) and analyzed in IDA Pro.
+## Sample Identification & Metadata
+* **Challenge Name:** ArasElmas's Custom Packer + Nested-VM Crackme (x64)
+* **Author:** ArasElmas
+* **Solver** DeepDominance
+* **Difficulty:** 8/10
+* **Platform:** Windows x86-64 (Console)
+* **MD5:** `FB89BF31056B6F85D7E119CA15797F47`
+* **SHA-256:** `32831A4842B9C59B3AFE3D2A0A5BC737BE377FC5F1070FD121102EDD3DBE4327`
+* **Target Valid License Key:** `gamers 2774-8852-F1D9-648A`
+* **Dumped Image Base:** `0x000029D1CF40000` / `0x00007FF623461000`
+* **Tools Used:** Detect It Easy (DIE), CFF Explorer, PE-bear, x64dbg (ScyllaHide), Scylla x64, IDA Pro, Ghidra, Unicorn Engine, Z3 Constraint Solver
+* **Archive Password:** `infected`
 
 ---
 
-## Binary Technical Specifications
-* **Architecture:** PE32+ (64-bit Executable)
-* **Target String:** `"Reverse this shit, find where this message is printed."`
-* **Toolchain:** PE-bear, x64dbg, Scylla x64 (v0.9.8), IDA Pro / IDA Free
+## Executive Summary
+This repository documents the complete technical reverse engineering walkthrough for **ArasElmas's Custom Packer + Nested-VM Crackme (x64)**. The binary employs complex anti-analysis layers: **Control-Flow Flattening (CFF)**, **Opaque Predicates**, **DRx hardware-breakpoint traps**, self-modifying code (`.smc`), custom bytecode virtual machine (`.vmbl`), and encrypted troll strings.
+
+By tracing memory execution in x64dbg under **ScyllaHide**, catching the unpacked image at base address `0x000029D1CF40000` / `0x00007FF623461000`, dumping the memory layout, and analyzing the master validation router (`FUN_1400051c0`), the underlying 10-round ARX (Add-Rotate-XOR) state engine was isolated and solved using **Z3 Constraint Solver**.
 
 ---
 
 ## Technical Walkthrough
 
-### 1. Static Triage & Import Inspection
-Initial inspection using **PE-bear** revealed a modified PE header with obfuscated import tables. Standard static analysis tools were unable to resolve the complete WINAPI import list due to runtime packing.
+### 1. Static Triage & Memory Section Mapping
+Static triage using **Detect It Easy (DIE)** and **PE-bear** revealed compressed PE sections (`.lucky0`, `.lucky1`, `.lucky2`) and customized headers designed to disrupt standard decompilation.
 
-![PE-bear Initial Analysis](images/1.png)
-![PE-bear Initial Analysis](images/2.png)
-![PE-bear Initial Analysis](images/3.png)
+* **Section Structure (PE-bear & x64dbg Memory Map):**
+  * `.lucky0` (`0x00007FF623461000`): Initial packer Entry Point (`EP = 7F0`)
+  * `.lucky1` (`0x00007FF62346C000`): Encrypted shellcode/payload blocks
+  * `.lucky2` (`0x00007FF6235EB000`): Dynamic execution space & unpacked VM stub (`0x200000` bytes)
+  * Unpacked Layout (`.text`, `.smc`, `.vmbl`, `.rdata`): Inner PE modules mapped dynamically at base `0x000029D1CF40000`.
 
----
-
-### 2. Dynamic Unpacking & OEP Discovery
-The sample was executed inside **x64dbg** to trace the memory allocation and unpacking stub:
-1. **Memory Permission Manipulation:** Set a breakpoint on `kernel32.VirtualProtect` to intercept memory allocation shifts to executable states (`PAGE_EXECUTE_READWRITE`).
-2. **Unpacking Loop:** Executed until returning to the main module space (`CTRL + F9`), observing dynamic API resolution using `LoadLibraryExW` and `GetProcAddress`.
-3. **Tail Jump:** Located the OEP transition at `0x00007FF7DE47944F` on a `ret` instruction. Single-stepping (`F7`) led directly to the CRT initialization routine at the Original Entry Point.
-
-* **Discovered OEP (RVA):** `0x00007FF7DE478289`
-
-![x64dbg OEP Transition](images/4.png)
+![DIE & CFF Explorer Scan](images/1.png)
+![PE-bear Section Headers & RVA Layout](images/2.png)
+![x64dbg Memory Map & Dynamic Image Base](images/pe_dump_1.png)
 
 ---
 
-### 3. IAT Reconstruction & Memory Dumping
-With the process paused at OEP, **Scylla x64** was attached to rebuild the Import Address Table:
-* **IAT Address / Size:** `0x00007FF7DE49AF08` / `0x0280`
-* **Import Resolution:** Successfully resolved **80/80 valid API imports** (`KERNEL32.dll`) with `0` invalid entries.
-* **Fix Dump:** Dumped the memory space and fixed the IAT structure, appending a new `.SCY` section (`Characteristics: 0xE0000600`) to create the clean executable (`unpacked_SCY.exe`).
+### 2. Dynamic Unpacking & OEP Dumping (x64dbg)
+Due to active hardware-breakpoint detection (`DR0`–`DR7` register checks), **x64dbg** was configured with **ScyllaHide** (`VMProtect x86/x64` profile) to intercept `NtGetContextThread`, `NtSetContextThread`, and `KiUserExceptionDispatcher`.
 
-![Scylla IAT Reconstruction](images/5.jfif)
-![PE-bear Re-alignment Verification](images/6.png)
+#### Unpacking Steps:
+1. **API Breakpoint:** Set a breakpoint on `KERNEL32.VirtualProtect` (`0x00007FF623461877` / `0x1400091A0`) to capture memory region shifts to executable states (`PAGE_EXECUTE_READWRITE`).
+2. **OEP Discovery:** Executed through the dynamic unpacker loop until a `ret` instruction jumped directly into the decrypted module space at `0x000029D1CF40000`.
+3. **Memory Dumping:** Attached **Scylla x64**, rebuilt 80/80 valid API imports (`KERNEL32.dll` and `msvcrt.dll`), and saved the dumped PE as `crackme.lucky_0000029D1CF40000.exe`.
 
----
-
-### 4. Anti-Debugging Bypass (Static Patching)
-During static disassembly of `unpacked_SCY.exe` in **IDA Pro**, an anti-analysis routine was identified within `sub_7FF7DE477CC0`:
-* The binary executed `call cs:IsDebuggerPresent` followed by conditional branch jumps (`jnz`, `jz`) to terminate execution under a debugger.
-* **Bypass Strategy:** The conditional jump instructions were patched with **NOP (`0x90`)** opcodes, forcing execution flow into the main routine regardless of debugger presence.
-
-![IDA Pro NOP Patching](images/7.png)
-![IDA Pro NOP Patching](images/8.png)
+![x64dbg Unpacking Stub & VirtualProtect Call](images/1.jfif)
 
 ---
 
-### 5. Disassembly & Core Logic Analysis
-Disassembling the unpacked binary in IDA Pro's Graph View revealed the core function (`sub_7FF7DE461340` / `main`):
-* The routine loads the target string via `lea rdx, aReverseThisShi` (`"Reverse this shit, find where this message is printed."`).
-* The string is passed to `sub_7FF7DE461530` for standard C++ `std::cout` console output.
-* Analysis confirmed no secondary password checks, obfuscated license loops, or hidden flag validation routines exist—reversing the unpacking stub and isolating the console output call fulfilled the complete challenge objective.
+### 3. Decoy Analysis & Strings Isolation (IDA Pro)
+Opening the dumped payload `crackme.lucky_0000029D1CF40000.exe` in **IDA Pro** exposed the `.rdata`, `.smc`, and `.vmbl` sections. The strings table contained multi-layered decoy traps designed to mislead reverse engineers:
 
-![IDA Pro Core Logic Graph View](images/9.png)
+* **Troll Messages:** `"Aldin mi boruyu?"`, `"boru bu kadar kolay gelmez"`
+* **Fake License Identifiers:** `"CG-LICENSE-CHECK-V3"`, `"PRO-XXXX-XXXX-XXXX"`, `"RSA signature mismatch"`, `"HWID bind failed"`
+
+![IDA Pro Strings Window & Sections View](images/pe_dump_2.png)
 
 ---
 
-## Detection Signature (YARA)
+### 4. Master Orchestrator (`FUN_1400051c0`) & CFG Graph Analysis
+Disassembling the primary validation routine (`FUN_1400051c0`) in **Ghidra** isolated the master length router and state accumulator:
 
-```yara
-rule Custom_Protector_Unpacked {
-    meta:
-        description = "Detection rule for KaBan Custom Protector Crackme sample"
-        author = "DeepDominance"
-        date = "2026-10-04"
-        sample_md5 = "63809c874f7ca1de998cecf519a5fe95"
+* **Length Router (`switch(param_2)`):** Processes length modes `0x10`, `0x18`, `0x1d`, `0x1e`, and `0x20`.
+* **30-Byte Real Validation (`case 0x1e`):** Executes a 10-round custom ARX transformation. The 32-byte state matrix comparison does not short-circuit, accumulating differences via `OR` operations to defeat timing side-channel oracle attacks.
 
-    strings:
-        // Unique Target String
-        $s1 = "Reverse this shit, find where this message is printed." ascii
-        
-        // Import Artifacts
-        $s2 = "KERNEL32.dll" ascii
-        
-        // Opcode Pattern: lea rdx, string followed by print function call
-        $hex_pattern = { 48 8D 15 ?? ?? ?? ?? E8 ?? ?? ?? ?? 90 }
+![Ghidra CFG Switch Graph & Assembly Detail](images/6.png)
 
-    condition:
-        // Check for PE Header (MZ Magic Bytes)
-        uint16(0) == 0x5A4D and 
-        (
-            $s1 or ($s2 and$hex_pattern)
-        )
-}
+#### Decompiled Validation C Code Snippet:
+```c
+// Mode 0x1e (30-byte input) Validation Branch
+case 0x1e:
+    if ((((local_10 == local_14) && (local_18 != 0)) && (local_1c != 0)) && (local_20 != 0)) {
+        local_c = 1; // SUCCESS
+    }
+    else if (local_24 == 0x1e) {
+        local_c = FUN_140004640(param_1, param_2); // Decoy / Troll Loop
+    }
+    else {
+        local_c = 0;
+    }
+    break;
