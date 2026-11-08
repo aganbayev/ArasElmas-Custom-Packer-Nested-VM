@@ -3,7 +3,9 @@ rule ArasElmas_Custom_Packer_Crackme {
         description = "Detection rule for ArasElmas Custom Packer + Nested-VM Crackme"
         author = "Asif Ganbayev"
         date = "2026-10-07"
-        sample_md5 = "63809c874f7ca1de998cecf519a5fe95"
+        sample_md5 = "fb89bf31056b6f85d7e119ca15797f47"
+        dump_md5 = "aef5158eaedd6f7437357575c5cd0180"
+        note = "matches the unpacked memory dump; the packed file stores these strings encrypted"
 
     strings:
         // Decoy / Troll Strings
